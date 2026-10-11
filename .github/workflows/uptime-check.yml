@@ -1,0 +1,20 @@
+name: Hourly Website Status Check
+
+on:
+  schedule:
+    # Runs at minute 0 of every hour
+    - cron: '0 * * * *'
+  workflow_dispatch: # Allows manual trigger for testing
+
+jobs:
+  check-website:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Website
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://proprankdigital.com)
+          echo "Website responded with status code: $STATUS"
+          if [ "$STATUS" -ne 200 ]; then
+            echo "Website is DOWN! Status code: $STATUS"
+            exit 1
+          fi
