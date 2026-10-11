@@ -2,9 +2,8 @@ name: Hourly Website Status Check
 
 on:
   schedule:
-    # Runs at minute 0 of every hour
     - cron: '0 * * * *'
-  workflow_dispatch: # Allows manual trigger for testing
+  workflow_dispatch:
 
 jobs:
   check-website:
@@ -14,7 +13,9 @@ jobs:
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://proprankdigital.com)
           echo "Website responded with status code: $STATUS"
-          if [ "$STATUS" -ne 200 ]; then
-            echo "Website is DOWN! Status code: $STATUS"
+          if [ "$STATUS" -eq 200 ]; then
+            echo "Success: Website is up and running normally (200 OK)."
+          else
+            echo "Error: Website returned status code $STATUS"
             exit 1
           fi
