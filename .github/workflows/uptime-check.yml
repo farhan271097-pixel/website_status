@@ -1,3 +1,4 @@
+
 name: Hourly Website Status Check
 
 on:
@@ -8,14 +9,108 @@ on:
 jobs:
   check-website:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Ping Website
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests google-auth
+
+      - name: Check Website and Log to Google Sheets
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 https://proprankdigital.com)
-          echo "Website responded with status code: $STATUS"
-          if [ "$STATUS" -eq 200 ]; then
-            echo "Success: Website is up and running normally (200 OK)."
-          else
-            echo "Error: Website returned status code $STATUS"
-            exit 1
-          fi
+          python - <<'PY'
+          import os
+          import sys
+          import json
+          import time
+          from datetime import datetime, timezone
+
+          import requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+
+          url = "https://proprankdigital.com"
+          status_code = 0
+          response_time = 0
+          error = ""
+
+          try:
+              start = time.monotonic()
+              response = requests.get(
+                  url,
+                  timeout=10,
+                  allow_redirects=True
+              )
+              response_time = round((time.monotonic() - start) * 1000)
+              status_code = response.status_code
+
+              if status_code == 200:
+                  analysis = "UP: Website returned HTTP 200 OK."
+              else:
+                  analysis = f"ALERT: Website returned HTTP {status_code}."
+                  error = f"Unexpected HTTP status: {status_code}"
+
+          except requests.RequestException as exc:
+              response_time = round(response_time)
+              analysis = "DOWN or UNREACHABLE: Request failed."
+              error = str(exc)[:500]
+
+          timestamp = datetime.now(timezone.utc).isoformat()
+          status = "UP" if status_code == 200 else "DOWN"
+
+          credentials_info = json.loads(
+              os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+          )
+          credentials = service_account.Credentials.from_service_account_info(
+              credentials_info,
+              scopes=["https://www.googleapis.com/auth/spreadsheets"]
+          )
+          credentials.refresh(Request())
+
+          sheet_id = os.environ["GOOGLE_SHEET_ID"]
+          api_url = (
+              "https://sheets.googleapis.com/v4/spreadsheets/"
+              + sheet_id
+              + "/values/Checks!A:H:append"
+          )
+
+          row = [[
+              timestamp,
+              url,
+              status,
+              status_code if status_code else "",
+              response_time,
+              analysis,
+              error,
+              os.environ["GITHUB_RUN_URL"]
+          ]]
+
+          result = requests.post(
+              api_url,
+              params={
+                  "valueInputOption": "USER_ENTERED",
+                  "insertDataOption": "INSERT_ROWS"
+              },
+              headers={
+                  "Authorization": f"Bearer {credentials.token}"
+              },
+              json={"values": row},
+              timeout=20
+          )
+          result.raise_for_status()
+
+          print(f"Website status: {status}")
+          print(f"HTTP code: {status_code}")
+          print(f"Response time: {response_time} ms")
+          print("Monitoring result saved to Google Sheets.")
+
+          if status != "UP":
+              sys.exit(1)
+          PY
